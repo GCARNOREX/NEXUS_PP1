@@ -1,18 +1,17 @@
-use std::fs;
-fn main()
-{
-    let meminfo=fs::read_to_string("/proc/meminfo").expect("cannot read /proc/meminfo");
-    for line in meminfo.lines()
-    {
-        if let Some(kb)=parse_field(line, "MemTotal :")
-        {
-            println!("MemTotal :{} kB",kb);
-        }
-    }
-}
-fn parse_field(line: &str,key: &str)->Option<u64>
-{
-    let rest = line.strip_prefix(key)?;
-    rest.trim().split_whitespace().next()?.parse().ok()
+mod meminfo;
 
+use meminfo::{MemError, MemInfo};
+
+fn main() {
+    match MemInfo::read() {
+        Ok(m) => {
+            let used_kb = m.total_kb - m.available_kb;
+            println!("Total:     {} MB", m.total_kb / 1024);
+            println!("Free:      {} MB", m.free_kb / 1024);
+            println!("Available: {} MB", m.available_kb / 1024);
+            println!("Used:      {} MB", used_kb / 1024);
+        }
+        Err(MemError::Io(e)) => eprintln!("could not read /proc/meminfo: {}", e),
+        Err(MemError::MissingField(name)) => eprintln!("missing field in /proc/meminfo: {}", name),
+    }
 }
