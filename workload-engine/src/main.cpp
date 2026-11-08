@@ -61,6 +61,21 @@ void runMatrixWorkload(long n) {
         }
     }
 }
+void runMemoryWorkload(long sizeMB) {
+    long numElements = (sizeMB * 1024 * 1024) / sizeof(long);
+    std::vector<long> buffer(numElements, 0);
+
+    long numAccesses = numElements * 4;  // multiple passes worth of random touches
+    unsigned int seed = 12345;
+
+    for (long i = 0; i < numAccesses; ++i) {
+        // simple pseudo-random index, avoids rand() overhead skewing results
+        seed = seed * 1103515245 + 12345;
+        long idx = (seed >> 16) % numElements;
+        buffer[idx] = buffer[idx] + 1;  // read AND write, forces real memory traffic
+    }
+}
+
 void producer(long numItems) {
     for (long i = 0; i < numItems; ++i) {
         {
@@ -139,6 +154,11 @@ int main(int argc, char* argv[]) {
     runSyncWorkload(limit, numThreads);
     std::cout << "Sync workload complete.\n";
      }
+     else if (type == "memory") {
+    std::cout << "Running memory workload: " << limit << " MB buffer...\n";
+    runMemoryWorkload(limit);
+    std::cout << "Memory workload complete.\n";
+    }  
     else {
         std::cout << "Unknown type: " << type << "\n";
         return 1;
