@@ -1,7 +1,9 @@
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
-using namespace std;
+#include <vector>
+#include <algorithm>
+#include <string>
 
 // Counts primes below `limit` using simple trial division.
 long countPrimesBelow(long limit) {
@@ -20,21 +22,36 @@ long countPrimesBelow(long limit) {
 }
 
 int main(int argc, char* argv[]) {
-    long limit = 1000000; // default
-    if (argc > 1) {
-        limit = atol(argv[1]);
+    std::string type = "primes";  // default
+    long limit = 1000000;         // default
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg.rfind("--type=", 0) == 0) {
+            type = arg.substr(7);
+        } else {
+            limit = std::atol(argv[i]);  // plain number = limit/size
+        }
     }
 
-    cout << "Counting primes below " << limit << "...\n";
+    auto start = std::chrono::high_resolution_clock::now();
 
-    auto start = chrono::high_resolution_clock::now();
-    long result = countPrimesBelow(limit);
-    auto end = chrono::high_resolution_clock::now();
+    if (type == "primes") {
+        std::cout << "Counting primes below " << limit << "...\n";
+        long result = countPrimesBelow(limit);
+        std::cout << "Found " << result << " primes.\n";
+    } else if (type == "sort") {
+        std::cout << "Sorting " << limit << " random integers...\n";
+        runSortWorkload(limit);
+        std::cout << "Sort complete.\n";
+    } else {
+        std::cout << "Unknown type: " << type << "\n";
+        return 1;
+    }
 
-    chrono::duration<double> elapsed = end - start;
-
-    cout << "Found " << result << " primes.\n";
-    cout << "Time taken: " << elapsed.count() << " seconds\n";
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    std::cout << "Time taken: " << elapsed.count() << " seconds\n";
 
     return 0;
 }
