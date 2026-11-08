@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -37,8 +38,8 @@ type Snapshot struct {
 
 const (
 	historyLen = 300
-	queueSize  = 1000
-	numWorkers = 4
+	queueSize  = 5000
+	numWorkers = 8
 )
 
 var (
@@ -78,6 +79,13 @@ func worker() {
 			time.Sleep(delay)
 		}
 		store(s)
+		if pool != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := persist(ctx, s); err != nil {
+				log.Printf("persist: %v", err)
+			}
+			cancel()
+		}
 	}
 }
 
@@ -150,6 +158,9 @@ func getHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	if err := initDB(context.Background()); err != nil {
+		log.Fatalf("db: %v", err)
+	}
 	for i := 0; i < numWorkers; i++ {
 		go worker()
 	}
