@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,18 +35,50 @@ type Snapshot struct {
 	Processes  []Proc  `json:"processes"`
 }
 
-const historyLen = 300
+const (
+	historyLen = 300
+	queueSize  = 1000
+	numWorkers = 4
+)
 
 var (
 	mu       sync.RWMutex
 	latest   = map[string]Snapshot{}
 	history  = map[string][]Snapshot{}
 	lastSeen = map[string]time.Time{}
+
+	queue   = make(chan Snapshot, queueSize)
+	dropped atomic.Uint64
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// store does the actual map updates (this used to live inside ingest).
+func store(s Snapshot) {
+	mu.Lock()
+	defer mu.Unlock()
+	latest[s.Host] = s
+	h := history[s.Host]
+	if len(h) >= historyLen {
+		copy(h, h[1:])
+		h = h[:historyLen-1]
+	}
+	history[s.Host] = append(h, s)
+	lastSeen[s.Host] = time.Now()
+}
+
+func worker() {
+	// WORKER_DELAY (for example 20ms) simulates slow work so you can watch the queue fill up
+	delay, _ := time.ParseDuration(os.Getenv("WORKER_DELAY"))
+	for s := range queue {
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+		store(s)
+	}
 }
 
 func ingest(w http.ResponseWriter, r *http.Request) {
@@ -57,17 +91,21 @@ func ingest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing host", http.StatusBadRequest)
 		return
 	}
-	mu.Lock()
-	latest[s.Host] = s
-	h := history[s.Host]
-	if len(h) >= historyLen {
-		copy(h, h[1:])
-		h = h[:historyLen-1]
+	select {
+	case queue <- s:
+		w.WriteHeader(http.StatusAccepted)
+	default: // queue full: reject instead of blocking the handler
+		dropped.Add(1)
+		http.Error(w, "queue full", http.StatusServiceUnavailable)
 	}
-	history[s.Host] = append(h, s)
-	lastSeen[s.Host] = time.Now()
-	mu.Unlock()
-	w.WriteHeader(http.StatusAccepted)
+}
+
+func stats(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]any{
+		"queue_depth": len(queue),
+		"queue_size":  queueSize,
+		"dropped":     dropped.Load(),
+	})
 }
 
 type hostStatus struct {
@@ -112,8 +150,13 @@ func getHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	for i := 0; i < numWorkers; i++ {
+		go worker()
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ingest", ingest)
+	mux.HandleFunc("GET /stats", stats)
 	mux.HandleFunc("GET /hosts", listHosts)
 	mux.HandleFunc("GET /hosts/{host}", getHost)
 	mux.HandleFunc("GET /hosts/{host}/history", getHistory)

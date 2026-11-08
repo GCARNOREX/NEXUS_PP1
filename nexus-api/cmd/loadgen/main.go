@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 func main() {
 	const hosts, perHost = 20, 100
 	var wg sync.WaitGroup
+	var okCount, rejected atomic.Int64
 	start := time.Now()
 	for i := 0; i < hosts; i++ {
 		wg.Add(1)
@@ -24,10 +26,15 @@ func main() {
 					fmt.Println("error:", err)
 					return
 				}
+				if resp.StatusCode == http.StatusAccepted {
+					okCount.Add(1)
+				} else {
+					rejected.Add(1)
+				}
 				resp.Body.Close()
 			}
 		}(i)
 	}
 	wg.Wait()
-	fmt.Printf("sent %d snapshots in %v\n", hosts*perHost, time.Since(start))
+	fmt.Printf("accepted %d, rejected %d in %v\n", okCount.Load(), rejected.Load(), time.Since(start))
 }
