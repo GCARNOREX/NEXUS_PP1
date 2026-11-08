@@ -8,6 +8,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <queue>
+#include <fstream>
 std::mutex queueMutex;
 std::condition_variable cv;
 std::queue<int> workQueue;
@@ -74,6 +75,30 @@ void runMemoryWorkload(long sizeMB) {
         long idx = (seed >> 16) % numElements;
         buffer[idx] = buffer[idx] + 1;  // read AND write, forces real memory traffic
     }
+}
+void runIOWorkload(long sizeMB) {
+    const std::string filename = "io_workload_temp.dat";
+    const long chunkSize = 1024 * 1024; // 1 MB per chunk
+    std::string chunk(chunkSize, 'x');
+
+    // Write phase
+    std::ofstream outFile(filename, std::ios::binary);
+    for (long i = 0; i < sizeMB; ++i) {
+        outFile.write(chunk.data(), chunk.size());
+        outFile.flush();  // force actual disk write, don't let it buffer in RAM
+    }
+    outFile.close();
+
+    // Read phase
+    std::ifstream inFile(filename, std::ios::binary);
+    std::string readBuffer(chunkSize, '\0');
+    while (inFile.read(&readBuffer[0], chunkSize)) {
+        // just reading through the file
+    }
+    inFile.close();
+
+    // Clean up the temp file
+    std::remove(filename.c_str());
 }
 
 void producer(long numItems) {
@@ -159,6 +184,11 @@ int main(int argc, char* argv[]) {
     runMemoryWorkload(limit);
     std::cout << "Memory workload complete.\n";
     }  
+    else if (type == "io") {
+    std::cout << "Running I/O workload: " << limit << " MB write+read...\n";
+    runIOWorkload(limit);
+    std::cout << "I/O workload complete.\n";
+   }
     else {
         std::cout << "Unknown type: " << type << "\n";
         return 1;
