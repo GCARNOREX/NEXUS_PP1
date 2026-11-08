@@ -20,6 +20,39 @@ long countPrimesBelow(long limit) {
     }
     return count;
 }
+void runSortWorkload(long size) {
+    std::vector<int> data(size);
+    for (long i = 0; i < size; ++i) {
+        data[i] = std::rand();
+    }
+    std::sort(data.begin(), data.end());
+}
+
+// Multiplies two N×N matrices of doubles using plain nested loops.
+void runMatrixWorkload(long n) {
+    std::vector<std::vector<double>> A(n, std::vector<double>(n));
+    std::vector<std::vector<double>> B(n, std::vector<double>(n));
+    std::vector<std::vector<double>> C(n, std::vector<double>(n, 0.0));
+
+    // Fill A and B with random values
+    for (long i = 0; i < n; ++i) {
+        for (long j = 0; j < n; ++j) {
+            A[i][j] = static_cast<double>(std::rand()) / RAND_MAX;
+            B[i][j] = static_cast<double>(std::rand()) / RAND_MAX;
+        }
+    }
+
+    // C = A * B
+    for (long i = 0; i < n; ++i) {
+        for (long j = 0; j < n; ++j) {
+            double sum = 0.0;
+            for (long k = 0; k < n; ++k) {
+                sum += A[i][k] * B[k][j];
+            }
+            C[i][j] = sum;
+        }
+    }
+}
 
 int main(int argc, char* argv[]) {
     std::string type = "primes";  // default
@@ -44,7 +77,13 @@ int main(int argc, char* argv[]) {
         std::cout << "Sorting " << limit << " random integers...\n";
         runSortWorkload(limit);
         std::cout << "Sort complete.\n";
-    } else {
+    } 
+    else if (type == "matrix") {
+    std::cout << "Multiplying " << limit << "x" << limit << " matrices...\n";
+    runMatrixWorkload(limit);
+    std::cout << "Matrix multiplication complete.\n";
+    }
+    else {
         std::cout << "Unknown type: " << type << "\n";
         return 1;
     }
