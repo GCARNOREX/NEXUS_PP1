@@ -1,4 +1,4 @@
-use std::{fs, io};
+use procfs::{Current, Meminfo, ProcError};
 
 #[derive(Debug)]
 pub struct MemInfo {
@@ -9,28 +9,24 @@ pub struct MemInfo {
 
 #[derive(Debug)]
 pub enum MemError {
-    Io(io::Error),
+    Proc(ProcError),
     MissingField(&'static str),
 }
 
-impl From<io::Error> for MemError {
-    fn from(e: io::Error) -> Self {
-        MemError::Io(e)
+impl From<ProcError> for MemError {
+    fn from(e: ProcError) -> Self {
+        MemError::Proc(e)
     }
 }
 
 impl MemInfo {
     pub fn read() -> Result<MemInfo, MemError> {
-        let text = fs::read_to_string("/proc/meminfo")?;
+        let m = Meminfo::current()?;
+        let available = m.mem_available.ok_or(MemError::MissingField("MemAvailable"))?;
         Ok(MemInfo {
-            total_kb: field(&text, "MemTotal:").ok_or(MemError::MissingField("MemTotal"))?,
-            free_kb: field(&text, "MemFree:").ok_or(MemError::MissingField("MemFree"))?,
-            available_kb: field(&text, "MemAvailable:").ok_or(MemError::MissingField("MemAvailable"))?,
+            total_kb: m.mem_total / 1024,
+            free_kb: m.mem_free / 1024,
+            available_kb: available / 1024,
         })
     }
-}
-
-fn field(text: &str, key: &str) -> Option<u64> {
-    text.lines()
-        .find_map(|l| l.strip_prefix(key)?.split_whitespace().next()?.parse().ok())
 }
