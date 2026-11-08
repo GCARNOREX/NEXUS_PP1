@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"sync"
+	"time"
 )
 
 type Mem struct {
@@ -32,9 +33,13 @@ type Snapshot struct {
 	Processes  []Proc  `json:"processes"`
 }
 
+const historyLen = 300
+
 var (
-	mu     sync.RWMutex
-	latest = map[string]Snapshot{}
+	mu       sync.RWMutex
+	latest   = map[string]Snapshot{}
+	history  = map[string][]Snapshot{}
+	lastSeen = map[string]time.Time{}
 )
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -54,19 +59,31 @@ func ingest(w http.ResponseWriter, r *http.Request) {
 	}
 	mu.Lock()
 	latest[s.Host] = s
+	h := history[s.Host]
+	if len(h) >= historyLen {
+		copy(h, h[1:])
+		h = h[:historyLen-1]
+	}
+	history[s.Host] = append(h, s)
+	lastSeen[s.Host] = time.Now()
 	mu.Unlock()
 	w.WriteHeader(http.StatusAccepted)
 }
 
+type hostStatus struct {
+	Host       string  `json:"host"`
+	SecondsAgo float64 `json:"last_seen_seconds_ago"`
+}
+
 func listHosts(w http.ResponseWriter, r *http.Request) {
 	mu.RLock()
-	hosts := make([]string, 0, len(latest))
-	for h := range latest {
-		hosts = append(hosts, h)
+	out := make([]hostStatus, 0, len(lastSeen))
+	for h, t := range lastSeen {
+		out = append(out, hostStatus{h, time.Since(t).Seconds()})
 	}
 	mu.RUnlock()
-	sort.Strings(hosts)
-	writeJSON(w, hosts)
+	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
+	writeJSON(w, out)
 }
 
 func getHost(w http.ResponseWriter, r *http.Request) {
@@ -81,11 +98,25 @@ func getHost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s)
 }
 
+func getHistory(w http.ResponseWriter, r *http.Request) {
+	host := r.PathValue("host")
+	mu.RLock()
+	h, ok := history[host]
+	cp := append([]Snapshot(nil), h...) // copy so the lock can be released before encoding
+	mu.RUnlock()
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	writeJSON(w, cp)
+}
+
 func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ingest", ingest)
 	mux.HandleFunc("GET /hosts", listHosts)
 	mux.HandleFunc("GET /hosts/{host}", getHost)
+	mux.HandleFunc("GET /hosts/{host}/history", getHistory)
 
 	log.Println("listening on :8080")
 	log.Fatal(http.ListenAndServe(":8080", mux))
