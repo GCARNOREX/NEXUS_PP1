@@ -1,8 +1,9 @@
 use procfs::process::all_processes;
 use procfs::ProcError;
 use std::{collections::HashMap, thread, time::Duration};
+use serde::Serialize;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct ProcInfo {
     pub pid: i32,
     pub name: String,
@@ -49,4 +50,24 @@ pub fn sample_cpu(interval: Duration) -> Result<Vec<(ProcInfo, f64)>, ProcError>
             Some((p, pct))
         })
         .collect())
+}
+#[derive(Debug, Serialize)]
+pub struct ProcSnap {
+    #[serde(flatten)]
+    pub info: ProcInfo,
+    pub cpu_percent: f64,
+}
+
+/// Tracks the given PIDs; with no PIDs, returns the 10 busiest processes.
+pub fn sample_filtered(interval: Duration, pids: &[i32]) -> Result<Vec<ProcSnap>, ProcError> {
+    let mut snaps: Vec<ProcSnap> = sample_cpu(interval)?
+        .into_iter()
+        .filter(|(p, _)| pids.is_empty() || pids.contains(&p.pid))
+        .map(|(info, cpu_percent)| ProcSnap { info, cpu_percent })
+        .collect();
+    if pids.is_empty() {
+        snaps.sort_by(|a, b| b.cpu_percent.partial_cmp(&a.cpu_percent).unwrap());
+        snaps.truncate(10);
+    }
+    Ok(snaps)
 }

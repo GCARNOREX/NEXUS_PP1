@@ -3,42 +3,91 @@ mod meminfo;
 mod process;
 
 use meminfo::{MemError, MemInfo};
-use std::time::Duration;
+use process::ProcSnap;
+use serde::Serialize;
+use std::{
+    env, fs,
+    sync::mpsc,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+enum Msg {
+    Cpu(f64),
+    Mem(MemInfo),
+    Procs(Vec<ProcSnap>),
+}
+
+#[derive(Serialize)]
+struct Snapshot {
+    host: String,
+    timestamp: u64,
+    cpu_percent: f64,
+    mem: MemInfo,
+    processes: Vec<ProcSnap>,
+}
+
+fn hostname() -> String {
+    fs::read_to_string("/proc/sys/kernel/hostname")
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".into())
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
+}
 
 fn main() {
+    // PIDs to track come from the command line: cargo run -- 1234 5678
+    let pids: Vec<i32> = env::args().skip(1).filter_map(|a| a.parse().ok()).collect();
+    let (tx, rx) = mpsc::channel::<Msg>();
+
+    let tx_cpu = tx.clone();
+    thread::spawn(move || loop {
+        if let Ok(p) = cpu::usage_percent() {
+            if tx_cpu.send(Msg::Cpu(p)).is_err() { break; }
+        }
+    });
+
+   let tx_mem = tx.clone();
+thread::spawn(move || loop {
     match MemInfo::read() {
         Ok(m) => {
-            println!("Total:     {} MB", m.total_kb / 1024);
-            println!("Free:      {} MB", m.free_kb / 1024);
-            println!("Available: {} MB", m.available_kb / 1024);
-            println!("Used:      {} MB", (m.total_kb - m.available_kb) / 1024);
+            if tx_mem.send(Msg::Mem(m)).is_err() { break; }
         }
-        Err(MemError::Proc(e)) => eprintln!("could not read memory info: {:?}", e),
-        Err(MemError::MissingField(name)) => eprintln!("missing field: {}", name),
+        Err(MemError::Proc(e)) => eprintln!("mem error: {:?}", e),
+        Err(MemError::MissingField(name)) => eprintln!("mem error: missing field {}", name),
     }
+    thread::sleep(Duration::from_secs(1));
+});
+    let tx_proc = tx.clone();
+    thread::spawn(move || loop {
+        if let Ok(v) = process::sample_filtered(Duration::from_secs(1), &pids) {
+            if tx_proc.send(Msg::Procs(v)).is_err() { break; }
+        }
+    });
 
-    match cpu::usage_percent() {
-        Ok(p) => println!("CPU usage: {:.1}%", p),
-        Err(e) => eprintln!("could not read CPU stats: {:?}", e),
-    }
-    match process::list() {
-    Ok(mut procs) => {
-        procs.sort_by(|a, b| b.rss_kb.cmp(&a.rss_kb));
-        println!("\n{:>7} {:<16} {:>5} {:>7} {:>9}", "PID", "NAME", "STATE", "THREADS", "RSS(MB)");
-        for p in procs.iter().take(10) {
-            println!("{:>7} {:<16} {:>5} {:>7} {:>9}", p.pid, p.name, p.state, p.threads, p.rss_kb / 1024);
+    let host = hostname();
+    let mut cpu_p: Option<f64> = None;
+    let mut mem: Option<MemInfo> = None;
+
+    // The process thread ticks about once a second, so each Procs message triggers one snapshot.
+    for msg in rx {
+        match msg {
+            Msg::Cpu(p) => cpu_p = Some(p),
+            Msg::Mem(m) => mem = Some(m),
+            Msg::Procs(processes) => {
+                if let (Some(c), Some(m)) = (cpu_p, mem.clone()) {
+                    let snap = Snapshot {
+                        host: host.clone(),
+                        timestamp: now_secs(),
+                        cpu_percent: c,
+                        mem: m,
+                        processes,
+                    };
+                    println!("{}", serde_json::to_string(&snap).unwrap());
+                }
+            }
         }
     }
-    Err(e) => eprintln!("could not list processes: {:?}", e),
-}
-match process::sample_cpu(Duration::from_secs(1)) {
-    Ok(mut v) => {
-        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        println!("\n{:>7} {:<16} {:>6}", "PID", "NAME", "CPU%");
-        for (p, pct) in v.iter().take(10) {
-            println!("{:>7} {:<16} {:>6.1}", p.pid, p.name, pct);
-        }
-    }
-    Err(e) => eprintln!("could not sample process CPU: {:?}", e),
-}
 }

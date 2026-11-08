@@ -1,6 +1,6 @@
 use procfs::{Current, Meminfo, ProcError};
-
-#[derive(Debug)]
+use serde::Serialize;
+#[derive(Debug, Clone, Serialize)]
 pub struct MemInfo {
     pub total_kb: u64,
     pub free_kb: u64,
@@ -19,7 +19,10 @@ impl From<ProcError> for MemError {
     }
 }
 
+
 impl MemInfo {
+    
+
     pub fn read() -> Result<MemInfo, MemError> {
         let m = Meminfo::current()?;
         let available = m.mem_available.ok_or(MemError::MissingField("MemAvailable"))?;
