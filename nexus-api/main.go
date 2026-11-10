@@ -79,6 +79,13 @@ func worker() {
 			time.Sleep(delay)
 		}
 		store(s)
+		if rdb != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := cacheLive(ctx, s); err != nil {
+				log.Printf("redis: %v", err)
+			}
+			cancel()
+		}
 		if pool != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			if err := persist(ctx, s); err != nil {
@@ -161,12 +168,16 @@ func main() {
 	if err := initDB(context.Background()); err != nil {
 		log.Fatalf("db: %v", err)
 	}
+	if err := initRedis(context.Background()); err != nil {
+		log.Fatalf("redis: %v", err)
+	}
 	for i := 0; i < numWorkers; i++ {
 		go worker()
 	}
 	startConsumer(context.Background())
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /live", live)
 	mux.HandleFunc("POST /ingest", ingest)
 	mux.HandleFunc("GET /stats", stats)
 	mux.HandleFunc("GET /hosts", listHosts)
