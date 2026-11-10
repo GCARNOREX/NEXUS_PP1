@@ -164,6 +164,7 @@ func main() {
 	for i := 0; i < numWorkers; i++ {
 		go worker()
 	}
+	startConsumer(context.Background())
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ingest", ingest)

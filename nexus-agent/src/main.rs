@@ -2,6 +2,8 @@ mod cpu;
 mod meminfo;
 mod process;
 
+use rdkafka::config::ClientConfig;
+use rdkafka::producer::{BaseProducer, BaseRecord};
 use meminfo::{MemError, MemInfo};
 use process::ProcSnap;
 use serde::Serialize;
@@ -71,6 +73,15 @@ thread::spawn(move || loop {
     let mut cpu_p: Option<f64> = None;
     let mut mem: Option<MemInfo> = None;
 
+        // If KAFKA_BROKERS is set, publish there; otherwise print to stdout as before.
+    let producer: Option<BaseProducer> = env::var("KAFKA_BROKERS").ok().map(|brokers| {
+        ClientConfig::new()
+            .set("bootstrap.servers", &brokers)
+            .set("message.timeout.ms", "5000")
+            .create()
+            .expect("could not create Kafka producer")
+    });
+
     // The process thread ticks about once a second, so each Procs message triggers one snapshot.
     for msg in rx {
         match msg {
@@ -85,7 +96,17 @@ thread::spawn(move || loop {
                         mem: m,
                         processes,
                     };
-                    println!("{}", serde_json::to_string(&snap).unwrap());
+                                        let json = serde_json::to_string(&snap).unwrap();
+                    match &producer {
+                        Some(p) => {
+                            let rec = BaseRecord::to("nexus.telemetry").key(&snap.host).payload(&json);
+                            if let Err((e, _)) = p.send(rec) {
+                                eprintln!("kafka send failed: {}", e);
+                            }
+                            p.poll(Duration::from_millis(0));
+                        }
+                        None => println!("{}", json),
+                    }
                 }
             }
         }

@@ -57,7 +57,8 @@ export default function App() {
   }, [live.data])
 
   const status = hosts.data?.find((h) => h.host === selected)
-  const online = status && status.last_seen_seconds_ago < 5
+  const apiDown = Boolean(hosts.error || live.error)
+  const online = !apiDown && status && status.last_seen_seconds_ago < 5
   const snap = live.data
   const usedKB = snap ? snap.mem.total_kb - snap.mem.available_kb : 0
   const memPct = snap ? (usedKB / snap.mem.total_kb) * 100 : 0
@@ -75,8 +76,10 @@ export default function App() {
             <option key={h.host} value={h.host}>{h.host}</option>
           ))}
         </select>
-        {selected && (
-          <span className={online ? 'dot on' : 'dot off'}>{online ? 'online' : 'offline'}</span>
+            {selected && (
+          <span className={online ? 'dot on' : 'dot off'}>
+            {apiDown ? 'API unreachable' : online ? 'online' : 'offline'}
+          </span>
         )}
       </header>
 
